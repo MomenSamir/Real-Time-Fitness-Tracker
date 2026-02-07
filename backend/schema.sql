@@ -102,3 +102,22 @@ ON DUPLICATE KEY UPDATE
   water_ml = 1000,
   sleep_hours = 7.0,
   mood = 'good';
+
+
+ALTER TABLE workouts ADD COLUMN workout_time TIME AFTER workout_date;
+
+CREATE TABLE IF NOT EXISTS activity_reminders (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  activity_type ENUM('workout', 'weight', 'water', 'sleep') NOT NULL,
+  reminder_time TIME NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  days_of_week VARCHAR(20) DEFAULT 'all',
+  message TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO activity_reminders (activity_type, reminder_time, message) VALUES
+('weight', '07:00:00', 'Time to log your morning weight!'),
+('workout', '18:00:00', 'Have you worked out today?'),
+('water', '20:00:00', 'Did you drink enough water today?'),
+('sleep', '22:00:00', 'Log your sleep hours from last night!');
