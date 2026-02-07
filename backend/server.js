@@ -135,11 +135,11 @@ app.get('/api/workouts/chart', async (req, res) => {
 // Create workout
 app.post('/api/workouts', async (req, res) => {
   try {
-    const { workout_type, workout_name, duration_minutes, calories_burned, intensity, workout_date, notes } = req.body;
+    const { workout_type, workout_name, duration_minutes, calories_burned, intensity, workout_date, workout_time, notes } = req.body;
     
     const [result] = await db.query(
-      'INSERT INTO workouts (workout_type, workout_name, duration_minutes, calories_burned, intensity, workout_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [workout_type, workout_name, duration_minutes, calories_burned, intensity, workout_date, notes]
+      'INSERT INTO workouts (workout_type, workout_name, duration_minutes, calories_burned, intensity, workout_date, workout_time, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [workout_type, workout_name, duration_minutes, calories_burned, intensity, workout_date, workout_time, notes]
     );
 
     const [newWorkout] = await db.query('SELECT * FROM workouts WHERE id = ?', [result.insertId]);
@@ -149,6 +149,73 @@ app.post('/api/workouts', async (req, res) => {
   } catch (error) {
     console.error('Error creating workout:', error);
     res.status(500).json({ error: 'Failed to create workout' });
+  }
+});
+
+// ========== REMINDERS ROUTES ==========
+
+// Get all reminders
+app.get('/api/reminders', async (req, res) => {
+  try {
+    const [reminders] = await db.query('SELECT * FROM activity_reminders ORDER BY reminder_time');
+    res.json(reminders);
+  } catch (error) {
+    console.error('Error fetching reminders:', error);
+    res.status(500).json({ error: 'Failed to fetch reminders' });
+  }
+});
+
+// Create reminder
+app.post('/api/reminders', async (req, res) => {
+  try {
+    const { activity_type, reminder_time, message, days_of_week } = req.body;
+    
+    const [result] = await db.query(
+      'INSERT INTO activity_reminders (activity_type, reminder_time, message, days_of_week) VALUES (?, ?, ?, ?)',
+      [activity_type, reminder_time, message, days_of_week || 'all']
+    );
+
+    const [newReminder] = await db.query('SELECT * FROM activity_reminders WHERE id = ?', [result.insertId]);
+    
+    io.emit('reminder_created', newReminder[0]);
+    res.status(201).json(newReminder[0]);
+  } catch (error) {
+    console.error('Error creating reminder:', error);
+    res.status(500).json({ error: 'Failed to create reminder' });
+  }
+});
+
+// Update reminder
+app.put('/api/reminders/:id', async (req, res) => {
+  try {
+    const { reminder_time, is_active, message } = req.body;
+    const { id } = req.params;
+
+    await db.query(
+      'UPDATE activity_reminders SET reminder_time = ?, is_active = ?, message = ? WHERE id = ?',
+      [reminder_time, is_active, message, id]
+    );
+
+    const [updatedReminder] = await db.query('SELECT * FROM activity_reminders WHERE id = ?', [id]);
+    
+    io.emit('reminder_updated', updatedReminder[0]);
+    res.json(updatedReminder[0]);
+  } catch (error) {
+    console.error('Error updating reminder:', error);
+    res.status(500).json({ error: 'Failed to update reminder' });
+  }
+});
+
+// Delete reminder
+app.delete('/api/reminders/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM activity_reminders WHERE id = ?', [req.params.id]);
+    
+    io.emit('reminder_deleted', { id: parseInt(req.params.id) });
+    res.json({ message: 'Reminder deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting reminder:', error);
+    res.status(500).json({ error: 'Failed to delete reminder' });
   }
 });
 

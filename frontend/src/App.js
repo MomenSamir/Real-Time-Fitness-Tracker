@@ -19,6 +19,8 @@ function App() {
   const [logs, setLogs] = useState([]);
   const [todayLog, setTodayLog] = useState({});
   const [stats, setStats] = useState({});
+  const [reminders, setReminders] = useState([]);
+  const [showReminders, setShowReminders] = useState(false);
   
   // Form states
   const [showWorkoutForm, setShowWorkoutForm] = useState(false);
@@ -30,6 +32,7 @@ function App() {
     calories_burned: '',
     intensity: 'medium',
     workout_date: new Date().toISOString().split('T')[0],
+    workout_time: new Date().toTimeString().slice(0, 5),
     notes: ''
   });
   const [goalForm, setGoalForm] = useState({
@@ -112,12 +115,93 @@ function App() {
         fetchWorkouts(),
         fetchLogs(),
         fetchTodayLog(),
-        fetchStats()
+        fetchStats(),
+        fetchReminders()
       ]);
     } catch (error) {
       console.error('Error fetching data:', error);
     }
   };
+
+  const fetchReminders = async () => {
+    try {
+      const response = await axios.get(`${API_URL}/reminders`);
+      setReminders(response.data);
+    } catch (error) {
+      console.error('Error fetching reminders:', error);
+    }
+  };
+
+  // Check reminders every minute
+  useEffect(() => {
+    const checkReminders = () => {
+      const now = new Date();
+      const currentTime = now.toTimeString().slice(0, 5);
+      
+      reminders.forEach(reminder => {
+        if (!reminder.is_active) return;
+        
+        const reminderTime = reminder.reminder_time.slice(0, 5);
+        
+        if (currentTime === reminderTime) {
+          // Check if already logged today
+          checkIfActivityLogged(reminder);
+        }
+      });
+    };
+
+    const interval = setInterval(checkReminders, 60000); // Check every minute
+    checkReminders(); // Check immediately
+    
+    return () => clearInterval(interval);
+  }, [reminders, todayLog, workouts]);
+
+  const checkIfActivityLogged = (reminder) => {
+    const today = new Date().toISOString().split('T')[0];
+    
+    let isLogged = false;
+    
+    switch(reminder.activity_type) {
+      case 'weight':
+        isLogged = todayLog.weight_kg != null;
+        break;
+      case 'water':
+        isLogged = todayLog.water_ml > 0;
+        break;
+      case 'sleep':
+        isLogged = todayLog.sleep_hours != null;
+        break;
+      case 'workout':
+        isLogged = workouts.some(w => w.workout_date === today);
+        break;
+      default:
+        break;
+    }
+    
+    if (!isLogged) {
+      showReminderAlert(reminder);
+    }
+  };
+
+  const showReminderAlert = (reminder) => {
+    const message = reminder.message || `Time to log your ${reminder.activity_type}!`;
+    showNotification(`⏰ REMINDER: ${message}`);
+    
+    // Also show browser notification if permission granted
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('Fitness Tracker Reminder', {
+        body: message,
+        icon: '💪'
+      });
+    }
+  };
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
 
   const fetchGoals = async () => {
     try {
@@ -286,6 +370,7 @@ function App() {
         calories_burned: '',
         intensity: 'medium',
         workout_date: new Date().toISOString().split('T')[0],
+        workout_time: new Date().toTimeString().slice(0, 5),
         notes: ''
       });
     } catch (error) {
@@ -342,8 +427,13 @@ function App() {
 
       <header className="header">
         <h1>💪 My Fitness Tracker</h1>
-        <div className="connection-status">
-          {socket?.connected ? '🟢 Live' : '🔴 Offline'}
+        <div className="header-actions">
+          <button className="btn-reminders" onClick={() => setShowReminders(true)}>
+            ⏰ Reminders
+          </button>
+          <div className="connection-status">
+            {socket?.connected ? '🟢 Live' : '🔴 Offline'}
+          </div>
         </div>
       </header>
 
@@ -498,6 +588,7 @@ function App() {
                   <span className="badge">{workout.workout_type}</span>
                   <span>⏱️ {workout.duration_minutes} min</span>
                   <span>🔥 {workout.calories_burned} cal</span>
+                  {workout.workout_time && <span>🕐 {workout.workout_time.slice(0, 5)}</span>}
                   <span>📅 {new Date(workout.workout_date).toLocaleDateString()}</span>
                 </div>
               </div>
@@ -554,6 +645,11 @@ function App() {
                   type="date"
                   value={workoutForm.workout_date}
                   onChange={(e) => setWorkoutForm({ ...workoutForm, workout_date: e.target.value })}
+                />
+                <input
+                  type="time"
+                  value={workoutForm.workout_time}
+                  onChange={(e) => setWorkoutForm({ ...workoutForm, workout_time: e.target.value })}
                 />
                 <textarea
                   placeholder="Notes (optional)"
@@ -617,6 +713,57 @@ function App() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+        {/* Reminders Modal */}
+        {showReminders && (
+          <div className="modal-overlay" onClick={() => setShowReminders(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+              <h2>⏰ Activity Reminders</h2>
+              <p className="modal-subtitle">Get notified when it's time to log your activities</p>
+              
+              <div className="reminders-list">
+                {reminders.map(reminder => (
+                  <div key={reminder.id} className="reminder-card">
+                    <div className="reminder-header">
+                      <span className="reminder-type">{reminder.activity_type.toUpperCase()}</span>
+                      <label className="switch">
+                        <input
+                          type="checkbox"
+                          checked={reminder.is_active}
+                          onChange={async (e) => {
+                            try {
+                              await axios.put(`${API_URL}/reminders/${reminder.id}`, {
+                                ...reminder,
+                                is_active: e.target.checked
+                              });
+                              fetchReminders();
+                            } catch (error) {
+                              console.error('Error updating reminder:', error);
+                            }
+                          }}
+                        />
+                        <span className="slider"></span>
+                      </label>
+                    </div>
+                    <div className="reminder-time">
+                      🕐 {reminder.reminder_time.slice(0, 5)}
+                    </div>
+                    <div className="reminder-message">
+                      {reminder.message}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              <div className="reminder-note">
+                <p>💡 <strong>Tip:</strong> Allow browser notifications for alerts even when the app is in the background!</p>
+              </div>
+              
+              <button className="btn-primary" onClick={() => setShowReminders(false)}>
+                Close
+              </button>
             </div>
           </div>
         )}
