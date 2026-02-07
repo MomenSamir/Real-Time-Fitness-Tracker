@@ -21,6 +21,11 @@ function App() {
   const [stats, setStats] = useState({});
   const [reminders, setReminders] = useState([]);
   const [showReminders, setShowReminders] = useState(false);
+  const [nextReminder, setNextReminder] = useState(null);
+  const [timeUntilReminder, setTimeUntilReminder] = useState(null);
+  const [showAlarm, setShowAlarm] = useState(false);
+  const [currentAlarm, setCurrentAlarm] = useState(null);
+  const audioRef = useRef(null);
   
   // Form states
   const [showWorkoutForm, setShowWorkoutForm] = useState(false);
@@ -132,31 +137,59 @@ function App() {
     }
   };
 
-  // Check reminders every minute
+  // Real-time countdown for next reminder
   useEffect(() => {
-    const checkReminders = () => {
-      const now = new Date();
-      const currentTime = now.toTimeString().slice(0, 5);
+    const updateCountdown = () => {
+      if (reminders.length === 0) return;
       
-      reminders.forEach(reminder => {
-        if (!reminder.is_active) return;
+      const now = new Date();
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      
+      // Find upcoming reminders within next 10 minutes
+      const upcomingReminders = reminders
+        .filter(r => r.is_active)
+        .map(r => {
+          const [hours, minutes] = r.reminder_time.split(':');
+          const reminderMinutes = parseInt(hours) * 60 + parseInt(minutes);
+          
+          let minutesUntil = reminderMinutes - currentMinutes;
+          
+          // Handle day rollover (reminder tomorrow)
+          if (minutesUntil < 0) {
+            minutesUntil += 24 * 60;
+          }
+          
+          return {
+            ...r,
+            minutesUntil
+          };
+        })
+        .filter(r => r.minutesUntil <= 10) // Only show if within 10 minutes
+        .sort((a, b) => a.minutesUntil - b.minutesUntil);
+      
+      if (upcomingReminders.length > 0) {
+        const closest = upcomingReminders[0];
+        setNextReminder(closest);
+        setTimeUntilReminder(closest.minutesUntil);
         
-        const reminderTime = reminder.reminder_time.slice(0, 5);
-        
-        if (currentTime === reminderTime) {
-          // Check if already logged today
-          checkIfActivityLogged(reminder);
+        // If time is up (0 minutes), trigger alarm
+        if (closest.minutesUntil === 0 && now.getSeconds() === 0) {
+          checkAndTriggerAlarm(closest);
         }
-      });
+      } else {
+        setNextReminder(null);
+        setTimeUntilReminder(null);
+      }
     };
 
-    const interval = setInterval(checkReminders, 60000); // Check every minute
-    checkReminders(); // Check immediately
+    // Update every second for real-time countdown
+    const interval = setInterval(updateCountdown, 1000);
+    updateCountdown(); // Run immediately
     
     return () => clearInterval(interval);
   }, [reminders, todayLog, workouts]);
 
-  const checkIfActivityLogged = (reminder) => {
+  const checkAndTriggerAlarm = (reminder) => {
     const today = new Date().toISOString().split('T')[0];
     
     let isLogged = false;
@@ -179,20 +212,36 @@ function App() {
     }
     
     if (!isLogged) {
-      showReminderAlert(reminder);
+      triggerAlarm(reminder);
     }
   };
 
-  const showReminderAlert = (reminder) => {
-    const message = reminder.message || `Time to log your ${reminder.activity_type}!`;
-    showNotification(`⏰ REMINDER: ${message}`);
+  const triggerAlarm = (reminder) => {
+    setCurrentAlarm(reminder);
+    setShowAlarm(true);
     
-    // Also show browser notification if permission granted
+    // Play alarm sound
+    if (audioRef.current) {
+      audioRef.current.play().catch(err => console.log('Audio play failed:', err));
+    }
+    
+    // Browser notification
     if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification('Fitness Tracker Reminder', {
-        body: message,
-        icon: '💪'
+      new Notification('⏰ Fitness Tracker Alert!', {
+        body: reminder.message || `Time to log your ${reminder.activity_type}!`,
+        icon: '💪',
+        tag: 'fitness-reminder',
+        requireInteraction: true
       });
+    }
+  };
+
+  const dismissAlarm = () => {
+    setShowAlarm(false);
+    setCurrentAlarm(null);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
     }
   };
 
@@ -423,11 +472,54 @@ function App() {
 
   return (
     <div className="App">
+      {/* Alarm Audio */}
+      <audio ref={audioRef} loop>
+        <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTgIGWi77eefTRAMUKfj8LZjHAU4ktbyzHksBSR3x/DdkEAKFF606+uoVRQKRp/g8r5sIQYtgsrz2Ik4CBhov+3nn00QDFCn4/C2YxwFOJLW8sx5LAUkd8fw3ZBACRRM=" type="audio/wav" />
+      </audio>
+
       {notification && <div className="notification">{notification}</div>}
+
+      {/* Full-Screen Alarm Modal */}
+      {showAlarm && currentAlarm && (
+        <div className="alarm-overlay">
+          <div className="alarm-modal">
+            <div className="alarm-icon">⏰</div>
+            <h1 className="alarm-title">TIME'S UP!</h1>
+            <h2 className="alarm-activity">{currentAlarm.activity_type.toUpperCase()}</h2>
+            <p className="alarm-message">{currentAlarm.message}</p>
+            <button className="alarm-dismiss" onClick={dismissAlarm}>
+              ✓ Got it! I'll log now
+            </button>
+          </div>
+        </div>
+      )}
 
       <header className="header">
         <h1>💪 My Fitness Tracker</h1>
         <div className="header-actions">
+          {nextReminder && timeUntilReminder !== null && (
+            <div className="countdown-widget">
+              <div className="countdown-icon">
+                {nextReminder.activity_type === 'weight' && '⚖️'}
+                {nextReminder.activity_type === 'workout' && '🏋️'}
+                {nextReminder.activity_type === 'water' && '💧'}
+                {nextReminder.activity_type === 'sleep' && '😴'}
+              </div>
+              <div className="countdown-info">
+                <div className="countdown-label">{nextReminder.activity_type}</div>
+                <div className="countdown-time">
+                  {timeUntilReminder === 0 ? (
+                    <span className="countdown-now">NOW!</span>
+                  ) : (
+                    <>
+                      <span className="countdown-number">{timeUntilReminder}</span>
+                      <span className="countdown-unit">min</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
           <button className="btn-reminders" onClick={() => setShowReminders(true)}>
             ⏰ Reminders
           </button>
